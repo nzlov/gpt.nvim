@@ -1,10 +1,16 @@
 local M = {}
+local config = {}
 
 -- Setup API key
 M.setup = function(opts)
 	local api_key = opts.api_key
 	if api_key == nil then
 		print("Please provide an OpenAI API key")
+		return
+	end
+	local model = opts.model
+	if model == nil then
+		model = "gpt-3.5-turbo"
 		return
 	end
 
@@ -15,7 +21,8 @@ M.setup = function(opts)
 	end
 
 	-- Setup API key
-	vim.g.gpt_api_key = api_key
+	config.gpt_api_key = api_key
+	config.gpt_model = model
 end
 
 --[[
@@ -33,14 +40,14 @@ require('gpt').stream("What is the meaning of life?", {
 ]]
 --
 M.stream = function(prompt, opts)
-	if vim.g.gpt_api_key == nil then
+	if config.gpt_api_key == nil then
 		print("Please provide an OpenAI API key require('gpt').setup({})")
 		return
 	end
 
 	local payload = {
 		stream = true,
-		model = "gpt-3.5-turbo",
+		model = config.gpt_model,
 		messages = { { role = "user", content = prompt } },
 	}
 
@@ -61,10 +68,13 @@ M.stream = function(prompt, opts)
 		temp:close()
 	end
 
-	local command =
-		"curl --no-buffer https://api.openai.com/v1/chat/completions " ..
-		"-H 'Content-Type: application/json' -H 'Authorization: Bearer " .. vim.g.gpt_api_key .. "' " ..
-		"-d @" .. params_path .. " | tee ~/.local/share/nvim/gpt.log 2>/dev/null"
+	local command = "curl --no-buffer https://api.openai.com/v1/chat/completions "
+		.. "-H 'Content-Type: application/json' -H 'Authorization: Bearer "
+		.. config.gpt_api_key
+		.. "' "
+		.. "-d @"
+		.. params_path
+		.. " | tee ~/.local/share/nvim/gpt.log 2>/dev/null"
 
 	-- Write command to log file
 	local log = io.open(os.getenv("HOME") .. "/.local/share/nvim/gpt.log", "w")
@@ -73,7 +83,7 @@ M.stream = function(prompt, opts)
 		log:close()
 	end
 
-	vim.g.gpt_jobid = vim.fn.jobstart(command, {
+	config.gpt_jobid = vim.fn.jobstart(command, {
 		stdout_buffered = false,
 		on_stdout = function(_, data, _)
 			for _, line in ipairs(data) do
@@ -103,15 +113,12 @@ end
 
 local function get_visual_selection()
 	vim.cmd('noau normal! "vy"')
-	vim.cmd('noau normal! gv')
-	return vim.fn.getreg('v')
+	vim.cmd("noau normal! gv")
+	return vim.fn.getreg("v")
 end
 
 local function send_keys(keys)
-	vim.api.nvim_feedkeys(
-		vim.api.nvim_replace_termcodes(keys, true, false, true),
-		'm', true
-	)
+	vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), "m", true)
 end
 
 local function create_response_writer()
@@ -124,25 +131,18 @@ local function create_response_writer()
 	return function(chunk)
 		-- Delete the currently written response
 		local num_lines = #(vim.split(response, "\n", {}))
-		vim.api.nvim_buf_set_lines(
-			bufnum, line_start, line_start + num_lines,
-			false, {}
-		)
+		vim.api.nvim_buf_set_lines(bufnum, line_start, line_start + num_lines, false, {})
 
 		-- Update the line start to wherever the extmark is now
 		line_start = vim.api.nvim_buf_get_extmark_by_id(bufnum, nsnum, extmarkid, {})[1]
 
 		-- Write out the latest
 		response = response .. chunk
-		vim.api.nvim_buf_set_lines(
-			bufnum, line_start, line_start,
-			false, vim.split(response, "\n", {})
-		)
+		vim.api.nvim_buf_set_lines(bufnum, line_start, line_start, false, vim.split(response, "\n", {}))
 
-		vim.cmd('undojoin')
+		vim.cmd("undojoin")
 	end
 end
-
 
 --[[
 In visual mode given some selected text, ask the user how they
@@ -164,7 +164,7 @@ M.replace = function()
 
 	send_keys("d")
 
-	if mode == 'V' then
+	if mode == "V" then
 		send_keys("O")
 	end
 
@@ -172,9 +172,9 @@ M.replace = function()
 		trim_leading = true,
 		on_chunk = function(chunk)
 			chunk = vim.split(chunk, "\n", {})
-			vim.api.nvim_put(chunk, "c", mode == 'V', true)
-			vim.cmd('undojoin')
-		end
+			vim.api.nvim_put(chunk, "c", mode == "V", true)
+			vim.cmd("undojoin")
+		end,
 	})
 end
 
@@ -186,7 +186,7 @@ is currently positioned.
 M.prompt = function()
 	local input = vim.fn.input({
 		prompt = "[Prompt]: ",
-		cancelreturn = "__CANCEL__"
+		cancelreturn = "__CANCEL__",
 	})
 
 	if input == "__CANCEL__" then
@@ -196,7 +196,7 @@ M.prompt = function()
 	send_keys("<esc>")
 	M.stream(input, {
 		trim_leading = true,
-		on_chunk = create_response_writer()
+		on_chunk = create_response_writer(),
 	})
 end
 
@@ -212,7 +212,7 @@ M.visual_prompt = function()
 	local prompt = ""
 	local input = vim.fn.input({
 		prompt = "[Prompt]: " .. prompt,
-		cancelreturn = "__CANCEL__"
+		cancelreturn = "__CANCEL__",
 	})
 
 	if input == "__CANCEL__" then
@@ -224,20 +224,20 @@ M.visual_prompt = function()
 
 	send_keys("<esc>")
 
-	if mode == 'V' then
+	if mode == "V" then
 		send_keys("o<CR><esc>")
 	end
 
 	M.stream(prompt, {
 		trim_leading = true,
-		on_chunk = create_response_writer()
+		on_chunk = create_response_writer(),
 	})
 
 	send_keys("<esc>")
 end
 
 M.cancel = function()
-	vim.fn.jobstop(vim.g.gpt_jobid)
+	vim.fn.jobstop(config.gpt_jobid)
 end
 
 return M
